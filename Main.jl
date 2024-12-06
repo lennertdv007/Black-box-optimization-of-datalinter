@@ -20,11 +20,33 @@ function print_config()
     end
 end
 
-function exclude_all_linters() 
+function disable_all_linters() 
     for (value, key) in linters
         linters[value] = false
     end
     return 1
+end
+
+function count_lint_error(output)
+    for (linter, enabled) in linters
+        linters_true = 0
+        linters_false = 0
+        linters_nothing = 0
+        for (linterCore, boo) in output
+            if linter == String(linterCore[1].name)
+                if isnothing(boo)
+                    linters_nothing += 1
+                elseif boo
+                    linters_true += 1
+                else
+                    linters_false += 1
+                end
+            end
+        end
+    print("Linter : ", linter," enabled=", enabled, " has found ", linters_true, " problems, ")
+    print(linters_nothing, " times linter was not applicable, " )    
+    println(linters_false, " times no problem was found")
+    end
 end
 
 function run_datalinter()
@@ -43,10 +65,11 @@ function run_datalinter()
     println("Confguration took ", round(elapsed_time, digits=4), " seconds.")
     println("In that time, ", length(out), " problems were found.")
     print("\n")
+    count_lint_error(out)
     return 1
 end
 
-exclude_all_linters()
+disable_all_linters()
 
 for (value, key) in linters #loop to enable each linter sequentially
     run_datalinter()
