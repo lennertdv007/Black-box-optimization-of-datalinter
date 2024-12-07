@@ -1,39 +1,40 @@
-push!(LOAD_PATH, "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter")
+using Pkg
+using DataFrames
+Pkg.activate("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter")
+Pkg.instantiate()
 
 using DataLinter
 #using Pkg; Pkg.add("BlackBoxOptim")
 
-filepath = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/dataset_31_credit-g.arff"
-config = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter/config/default.toml")
+FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/dataset_31_credit-g.arff"
+CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter/CONFIG/default.toml")
 
-configs_used = []
 
-linters = config["linters"]
-parameters = config["parameters"]
+LINTERS = CONFIG["linters"]
+PARAMETERS = CONFIG["parameters"]
 
 function print_config()
-    for (linter, enabled) in linters
+    for (linter, enabled) in LINTERS
         println("Linter: $linter")
         println("  Enabled: $enabled")
-        linter_params = haskey(parameters, linter) ? parameters[linter] : Dict{String, Any}()
+        linter_params = haskey(PARAMETERS, linter) ? PARAMETERS[linter] : Dict{String, Any}()
         println("  Parameters: $linter_params")
     end
 end
 
 function disable_all_linters() 
-    for (value, key) in linters
-        linters[value] = false
+    for (value, key) in LINTERS
+        LINTERS[value] = false
     end
-    return 1
 end
 
 function count_lint_error(output)
-    for (linter, enabled) in linters
+    for (linter, enabled) in LINTERS
         linters_true = 0
         linters_false = 0
         linters_nothing = 0
-        for (linterCore, boo) in output
-            if linter == String(linterCore[1].name)
+        for ((_linter,_), boo) in output
+            if linter == String(_linter.name)
                 if isnothing(boo)
                     linters_nothing += 1
                 elseif boo
@@ -54,13 +55,13 @@ function run_datalinter()
     println("Running datalinter on configuration : ")
     print_config()
     println("\n")
-    #out = DataLinter.cli_linting_workflow("/Users/lennertdeville/Downloads/dataset_31_credit-g.arff", "", config)
-    start_time = time()
+    #out = DataLinter.cli_linting_workflow("/Users/lennertdeville/Downloads/dataset_31_credit-g.arff", "", CONFIG)
     kb = DataLinter.kb_load("")
-    ctx = DataLinter.DataInterface.build_data_context(filepath)
-    out = lint(ctx, kb; config, buffer=stdout, show_stats=true, show_passing=false, show_na=false)
+    ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
+    start_time = time()
+    out = lint(ctx, kb; config=CONFIG, progress=false)
     elapsed_time = time() - start_time
-    push!(configs_used,config)
+    process_output(out; buffer=stdout, show_passing=false, show_stats=true, show_na=false)
     #println(out)
     println("Confguration took ", round(elapsed_time, digits=4), " seconds.")
     println("In that time, ", length(out), " problems were found.")
@@ -69,11 +70,14 @@ function run_datalinter()
     return 1
 end
 
-disable_all_linters()
 
-for (value, key) in linters #loop to enable each linter sequentially
+function main()
+    disable_all_linters()
+    for (value, key) in LINTERS #loop to enable each linter sequentially
+        run_datalinter()
+        LINTERS[value] = true
+    end
     run_datalinter()
-    linters[value] = true
 end
+main()
 
-run_datalinter()
