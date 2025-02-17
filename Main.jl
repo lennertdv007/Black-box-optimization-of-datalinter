@@ -4,7 +4,8 @@ Pkg.activate("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter
 Pkg.instantiate()
 
 using DataLinter
-#using Pkg; Pkg.add("BlackBoxOptim")
+Pkg.add("BlackBoxOptim");
+using BlackBoxOptim
 
 FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/dataset_31_credit-g.arff"
 CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter/CONFIG/default.toml")
@@ -17,37 +18,62 @@ function print_config()
     for (linter, enabled) in LINTERS
         println("Linter: $linter")
         println("  Enabled: $enabled")
-        linter_params = haskey(PARAMETERS, linter) ? PARAMETERS[linter] : Dict{String, Any}()
+        linter_params = haskey(PARAMETERS, linter) ? PARAMETERS[linter] : Dict{String,Any}()
         println("  Parameters: $linter_params")
     end
 end
 
-function disable_all_linters() 
+function disable_all_linters()
     for (value, key) in LINTERS
         LINTERS[value] = false
     end
 end
 
+"""
+Returns a dictionary with for each Linter a dictionary with for each error type the amount of errors found
+"""
 function count_lint_error(output)
-    for (linter, enabled) in LINTERS
-        linters_true = 0
-        linters_false = 0
-        linters_nothing = 0
-        for ((_linter,_), boo) in output
-            if linter == String(_linter.name)
-                if isnothing(boo)
-                    linters_nothing += 1
-                elseif boo
-                    linters_true += 1
-                else
-                    linters_false += 1
-                end
-            end
+    result_dict = Dict{String,Dict{String,Int}}()
+    for ((linter, _), result) in output
+        lname = String(linter.name)
+        if !haskey(result_dict, lname)
+            result_dict[lname] = Dict("true" => 0, "false" => 0, "nothing" => 0, "info" => 0, "warning" => 0, "important" => 0, "experimental" => 0) # Initialize dict key with all 0 values
         end
-    print("Linter : ", linter," enabled=", enabled, " has found ", linters_true, " problems, ")
-    print(linters_nothing, " times linter was not applicable, " )    
-    println(linters_false, " times no problem was found")
+        if isnothing(result)
+            result_dict[lname]["nothing"] += 1
+        elseif result
+            result_dict[lname]["true"] += 1
+            result_dict[lname][linter.warn_level] += 1
+        else
+            result_dict[lname]["false"] += 1
+        end
     end
+    #println("Error count: ", result_dict)
+    return result_dict
+end
+
+"""
+Weights for each warning level used for the final score calculation
+"""
+const WARN_LEVEL_TO_NUM = Dict("info" => 1,
+    "warning" => 3,
+    "important" => 5,
+    "experimental" => 0,
+    "true" => 0,
+    "false" => 0,
+    "nothing" => -1)
+
+"""
+Calculates the score of a lint error based on the amount of errors and the warning level
+"""
+function score_lint_error(lint_error)
+    score = 0
+    for (linter, error_dict) in lint_error
+        for (error_type, count) in error_dict
+            score += WARN_LEVEL_TO_NUM[error_type] * count
+        end
+    end
+    return score
 end
 
 function run_datalinter()
@@ -55,19 +81,25 @@ function run_datalinter()
     println("Running datalinter on configuration : ")
     print_config()
     println("\n")
-    #out = DataLinter.cli_linting_workflow("/Users/lennertdeville/Downloads/dataset_31_credit-g.arff", "", CONFIG)
     kb = DataLinter.kb_load("")
     ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
     start_time = time()
     out = lint(ctx, kb; config=CONFIG, progress=false)
     elapsed_time = time() - start_time
-    process_output(out; buffer=stdout, show_passing=false, show_stats=true, show_na=false)
-    #println(out)
+    print("\n\n\n\n")
+    #process_output(out; buffer=stdout, show_passing=true, show_stats=true, show_na=true)
+    #print("\n\n\n\n")
+    #print("out: ", out)
+    #print("\n\n\n\n")
     println("Confguration took ", round(elapsed_time, digits=4), " seconds.")
     println("In that time, ", length(out), " problems were found.")
-    print("\n")
-    count_lint_error(out)
-    return 1
+    print("\n\n\n\n")
+    lint_error = count_lint_error(out)
+    print("\n\n\n\n")
+    s = score_lint_error(lint_error)
+    println("Score: ", s)
+    print("\n\n\n\n")
+    return s
 end
 
 
