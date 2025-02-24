@@ -14,18 +14,19 @@ CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub
 LINTERS = CONFIG["linters"]
 PARAMETERS = CONFIG["parameters"]
 
-function print_config()
-    for (linter, enabled) in LINTERS
+function print_config(config)
+    for (linter, enabled) in config["linters"]
         println("Linter: $linter")
         println("  Enabled: $enabled")
-        linter_params = haskey(PARAMETERS, linter) ? PARAMETERS[linter] : Dict{String,Any}()
+        p = config["parameters"]
+        linter_params = haskey(p, linter) ? p[linter] : Dict{String,Any}()
         println("  Parameters: $linter_params")
     end
 end
 
-function disable_all_linters()
-    for (value, key) in LINTERS
-        LINTERS[value] = false
+function disable_all_linters(config)
+    for (value, key) in config["linters"]
+        config["linters"][value] = false
     end
 end
 
@@ -58,10 +59,7 @@ Weights for each warning level used for the final score calculation
 const WARN_LEVEL_TO_NUM = Dict("info" => 1,
     "warning" => 3,
     "important" => 5,
-    "experimental" => 0,
-    "true" => 0,
-    "false" => 0,
-    "nothing" => -1)
+    "experimental" => 0)
 
 """
 Calculates the score of a lint error based on the amount of errors and the warning level
@@ -70,21 +68,22 @@ function score_lint_error(lint_error)
     score = 0
     for (linter, error_dict) in lint_error
         for (error_type, count) in error_dict
-            score += WARN_LEVEL_TO_NUM[error_type] * count
+            score += get(WARN_LEVEL_TO_NUM, error_type, 0) * count
+            #score += WARN_LEVEL_TO_NUM[error_type] * count
         end
     end
     return score
 end
 
-function run_datalinter()
+function run_datalinter(conf)
     print("\n")
     println("Running datalinter on configuration : ")
-    print_config()
+    print_config(conf)
     println("\n")
     kb = DataLinter.kb_load("")
     ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
     start_time = time()
-    out = lint(ctx, kb; config=CONFIG, progress=false)
+    out = lint(ctx, kb; config=conf, progress=false)
     elapsed_time = time() - start_time
     print("\n\n\n\n")
     #process_output(out; buffer=stdout, show_passing=true, show_stats=true, show_na=true)
@@ -93,7 +92,6 @@ function run_datalinter()
     #print("\n\n\n\n")
     println("Confguration took ", round(elapsed_time, digits=4), " seconds.")
     println("In that time, ", length(out), " problems were found.")
-    print("\n\n\n\n")
     lint_error = count_lint_error(out)
     print("\n\n\n\n")
     s = score_lint_error(lint_error)
@@ -102,14 +100,63 @@ function run_datalinter()
     return s
 end
 
+"""
+function that maps the paramaters to a config for bboptimize
+"""
+function params_to_config(params)
+    config = Dict{String,Any}( # Initialize config empty
+        "parameters" => Dict{String,Any}(),
+        "linters" => PARAMETERS # For now, don't touch the parameters
+    )
+    for (index, (value, key)) in enumerate(LINTERS)
+        config["linters"][value] = params[index] > 0.5
+    end
+    return config
+end
 
 function main()
-    disable_all_linters()
-    for (value, key) in LINTERS #loop to enable each linter sequentially
-        run_datalinter()
-        LINTERS[value] = true
-    end
-    run_datalinter()
+
+    function objective(params)
+        # 1) construct a config for the datalinter which is a temp toml file 
+        config = params_to_config(params)
+        # 2) run the linter with the config
+        kb = DataLinter.kb_load("")
+        ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
+        start_time = time()
+        out = lint(ctx, kb; config=config, progress=false)
+        # 2.2) delete config
+        # 3) calculate the data error indicator and the timing
+        elapsed_time = time() - start_time
+        lint_error = count_lint_error(out)
+        # 4) calculate the value of the fitness function (function that penalizes long timings and low errors)
+        s = score_lint_error(lint_error)
+        # 5 return the value of the fitness function
+        return float(1 / s) + elapsed_time #ERROR: LoadError: ArgumentError: The supplied fitness function does NOT return the expected fitness type Float64 when called with a potential solution it returned 96 of type Int64 so we cannot optimize it!
+    end # 1/s because bboptimize looks to minimize the fitness function
+
+    searchrange = [
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1)]
+
+    res = bboptimize(objective; searchrange=searchrange, NumDimensions=length(searchrange), MaxSteps=700)
+
+    bs = best_candidate(res)
+    bf = best_fitness(res)
+    println("best candidate: ", bs, " with fitness: ", bf, " = ", 1 / bf)
+    println("best config: ", print_config(params_to_config(bs)))
 end
 main()
 
