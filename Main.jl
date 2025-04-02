@@ -7,7 +7,7 @@ using DataLinter
 Pkg.add("BlackBoxOptim");
 using BlackBoxOptim
 
-FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/dataset_31_credit-g.arff"
+FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/Grocery_Inventory.csv"
 CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter/CONFIG/default.toml")
 
 
@@ -91,26 +91,53 @@ function run_datalinter(conf)
     return s
 end
 
+function time_datalinter(conf)
+    kb = DataLinter.kb_load("")
+    ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
+    start_time = time()
+    out = lint(ctx, kb; config=conf, progress=false)
+    elapsed_time = time() - start_time
+    return elapsed_time
+end
+
 """
 function that maps the paramaters to a config for bboptimize
     current version has only parameters to enable or disable linters
 """
 function params_to_config(params)
-    config = Dict{String,Any}( # Initialize config empty
-        "parameters" => Dict{String,Any}(),
-        "linters" => PARAMETERS # For now, don't touch the parameters
+    config = Dict{String,Any}( # Initialize config 
+        "parameters" => PARAMETERS,
+        "linters" => Dict{String,Any}()
     )
-    for (index, (value, key)) in enumerate(LINTERS)
-        config["linters"][value] = params[index] > 0.5
+    for (index, (key, value)) in enumerate(LINTERS)
+        config["linters"][key] = Bool(params[index] > 0.5)
+    end
+    index = 16
+    for (key, value) in PARAMETERS
+        if (length(value) == 0)
+            config["parameters"][key] = Dict{String,Any}()
+        else
+            for (pkey, pvalue) in value
+                if !(pkey == "zipcodes" || pkey == "unused_slot")
+                    config["parameters"][key][pkey] = params[index]
+                    index += 1
+                end
+            end
+        end
     end
     return config
 end
 
+
 function main()
 
-    function objective(params, time_weight=0.5)
+    #min_time = time_datalinter(params_to_config([0 for i in 1:length(LINTERS)]))
+    #max_time = time_datalinter(params_to_config([1 for i in 1:length(LINTERS)]))
+    #time_range = max_time - min_time
+
+    function linter_objective(params, time_weight=0.5)
         println("params: ", params)
-        # 1) construct a config for the datalinter which is a temp toml file 
+        # 1) construct a config for the datalinter which is a Dict
         config = params_to_config(params)
         # 2) run the linter with the config
         kb = DataLinter.kb_load("")
@@ -119,54 +146,80 @@ function main()
         out = lint(ctx, kb; config=config, progress=false)
         # 3) calculate the data error indicator and the timing
         elapsed_time = time() - start_time
-        s = score_lint_error(out)
+        score = score_lint_error(out)
         # score for linters that found nothing = 0, so this has no influence on the fitness function
         # maybe we should add a penalty for linters that found nothing? (score -= 1)?
         # 4) calculate the value of the fitness function (function that penalizes long timings and low errors)
         # bboptimize tries to minimize the fitness function
 
-        fitness::Float64 = (elapsed_time * time_weight) + 1 / s
-        normalized_fitness = (fitness - 1) / fitness
-        # does the time_weight make sense?
-        # does the fitness function need to be normalized?
-
-        #fitness::Float64 = 1 / s
-        # problem with this fitness function that it will just enable all the linters that have a score > 0
+        # normalize the time
+        #normalized_time = (elapsed_time - min_time) / time_range # how to use this in fitness function?
+        #fitness::Float64 = (elapsed_time * time_weight) + 1 / score * (1 - time_weight)
+        # does the score need to be normalized?
 
         # 5 return the value of the fitness function
-        return normalized_fitness
+        # look for bb fitness functions
+        # save for each run time, score, n_linters_enabled and config
+        # calculate the numbers of linters enabled
+        n_linters_enabled = sum([config["linters"][linter] == true for linter in keys(config["linters"])])
+        println("fitness: ", fitness, " elapsed_time: ", elapsed_time, " score: ", score, " n_linters_enabled: ", n_linters_enabled, "\n")
+        return elapsed_time, 1 / score, n_linters_enabled
     end
 
-    # How can we use discrete values for the searchrange?
-    # If not possible can we use a step size for the parameters?
-    # If not possible can we use a different optimizer?
     searchrange = [
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1),
-        (0, 1)]
+        (0, 1), # uncommon_signs
+        (0, 1), # enum_detector
+        (0, 1), # empty_example
+        (0, 1), # negative_values
+        (0, 1), # tokenizable_string
+        (0, 1), # number_as_string
+        (0, 1), # int_as_float
+        (0, 1), # long_tailed_distrib
+        (0, 1), # uncommon_list_lengths
+        (0, 1), # datetime_as_string
+        (0, 1), # duplicate_examples
+        (0, 1), # many_missing_values
+        (0, 1), # large_outliers
+        (0, 1), # circular_domain
+        (0, 1), # zipcodes_as_values
+        (1, 10), # distinct_max_limit (enum_detector)
+        (0, 0.1), # distinct_ratio (enum_detector)
+        (0, 10), # min_tokens (tokenizable_string)
+        (0, 1), # match_perc (number_as_string)
+        (1, 10), # zscore_multiplier (long_tailed_distrib)
+        (0, 0.1), # drop_proportion (long_tailed_distrib)
+        (0, 1), # match_perc (datetime_as_string)  
+        (0, 1), # threshold (many_missing_values)
+        (0, 100), # tukey_fences_k (large_outliers)
+        (0, 1)] # match_perc (zipcodes_as_values)
 
 
-    res = bboptimize(objective; searchrange=searchrange, NumDimensions=length(searchrange), StepRange=0.1, MaxSteps=1000)
+    result = []
+    function bb_run(params; fitness_function=linter_objective) # function that runs objective and saves the results
+        time, score, n_linters_enabled = fitness_function(params)
+        push!(result, (time, score, n_linters_enabled, params))
+        return (score, time)
+    end
+
+    weightedfitness(f) = f[1] * 0.3 + f[2] * 0.7
+
+    res = bboptimize(bb_run;
+        SearchRange=searchrange,
+        Method=:borg_moea,
+        NumDimensions=length(searchrange),
+        FitnessScheme=ParetoFitnessScheme{2}(is_minimizing=true, aggregator=weightedfitness),
+        MaxSteps=500,
+        ϵ=1.0)
 
     bs = best_candidate(res)
     bf = best_fitness(res)
     println("best candidate: ", bs, " with fitness: ", bf)
     println("best config: ", print_config(params_to_config(bs)))
+    @show pareto_frontier(res)
 
     enable_all_param = [1 for i in 1:length(LINTERS)]
-    x = run_datalinter(params_to_config(enable_all_param))
+    #x = run_datalinter(params_to_config(enable_all_param))
+    return pareto_frontier(res)
 end
-main()
+#main()
 
