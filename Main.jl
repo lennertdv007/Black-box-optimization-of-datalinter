@@ -1,5 +1,6 @@
 using Pkg
-#using DataFrames
+#using Plots
+using Gadfly
 Pkg.activate("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter")
 Pkg.instantiate()
 
@@ -69,25 +70,31 @@ function score_lint_error(lint_out)
     return score
 end
 
-function run_datalinter(conf)
-    print("\n")
-    println("Running datalinter on configuration : ")
-    print_config(conf)
-    println("\n")
+function run_datalinter(conf, verbose=false)
+    if verbose
+        print("\n")
+        println("Running datalinter on configuration : ")
+        print_config(conf)
+        println("\n")
+    end
     kb = DataLinter.kb_load("")
     ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
     start_time = time()
     out = lint(ctx, kb; config=conf, progress=false)
     elapsed_time = time() - start_time
-    print("\n\n\n\n")
-    println("Confguration took ", round(elapsed_time, digits=4), " seconds.")
-    println("In that time, ", length(out), " problems were found.")
+    if verbose
+        print("\n\n\n\n")
+        println("Confguration took ", round(elapsed_time, digits=4), " seconds.")
+        println("In that time, ", length(out), " problems were found.")
+        print("\n\n\n\n")
+    end
     lint_error = count_lint_error(out)
-    print("\n\n\n\n")
     s = score_lint_error(out)
-    println("lint_error", lint_error)
-    println("Score: ", s)
-    print("\n\n\n\n")
+    if verbose
+        println("lint_error", lint_error)
+        println("Score: ", s)
+        print("\n\n\n\n")
+    end
     return s
 end
 
@@ -128,15 +135,36 @@ function params_to_config(params)
     return config
 end
 
+function plot_pareto(res)
+    pareto_curve_func(t, ::Type{Val{N}}) where {N} = (N * t[1]^2, N * (2 - t[1])^2)
+    pareto_curve = BlackBoxOptim.Hypersurface(pareto_curve_func,
+        RectSearchSpace(1, (0.0, 2.0)))
+
+    # generate the set of ϵ-indexed points on the exact Pareto frontier
+    pareto_pts = BlackBoxOptim.generate(pareto_curve,
+        fitness_scheme(res), Val{numdims(res)})
+    # calculate the distance between the solution and the exact frontier
+    BlackBoxOptim.IGD(pareto_curve, pareto_frontier(res), fitness_scheme(res), Val{numdims(res)})
+
+    # draw the results
+    Gadfly.plot(layer(x=[x.orig[1] for x in values(pareto_pts)],
+            y=[x.orig[2] for x in values(pareto_pts)],
+            Geom.line),
+        layer(x=[fitness(x)[1] for x in pareto_frontier(res)], # This gives only 1 point
+            y=[fitness(x)[2] for x in pareto_frontier(res)],
+            color=[index for (index, x) in enumerate(pareto_frontier(res))],
+            Geom.point))
+end
+
 
 function main()
 
-    #min_time = time_datalinter(params_to_config([0 for i in 1:length(LINTERS)]))
-    #max_time = time_datalinter(params_to_config([1 for i in 1:length(LINTERS)]))
-    #time_range = max_time - min_time
+    min_time = time_datalinter(params_to_config([0 for _ in 1:27]))
+    max_time = time_datalinter(params_to_config(append!([1 for _ in 1:16], [0 for _ in 1:11])))
+    time_range = max_time - min_time
 
     function linter_objective(params, time_weight=0.5)
-        println("params: ", params)
+        #println("params: ", params)
         # 1) construct a config for the datalinter which is a Dict
         config = params_to_config(params)
         # 2) run the linter with the config
@@ -153,7 +181,7 @@ function main()
         # bboptimize tries to minimize the fitness function
 
         # normalize the time
-        #normalized_time = (elapsed_time - min_time) / time_range # how to use this in fitness function?
+        normalized_time = (elapsed_time - min_time) / time_range # how to use this in fitness function?
         #fitness::Float64 = (elapsed_time * time_weight) + 1 / score * (1 - time_weight)
         # does the score need to be normalized?
 
@@ -162,8 +190,8 @@ function main()
         # save for each run time, score, n_linters_enabled and config
         # calculate the numbers of linters enabled
         n_linters_enabled = sum([config["linters"][linter] == true for linter in keys(config["linters"])])
-        println("fitness: ", fitness, " elapsed_time: ", elapsed_time, " score: ", score, " n_linters_enabled: ", n_linters_enabled, "\n")
-        return elapsed_time, 1 / score, n_linters_enabled
+        #println("fitness: ", fitness, " elapsed_time: ", elapsed_time, " score: ", score, " n_linters_enabled: ", n_linters_enabled, "\n")
+        return normalized_time, 1 / score, n_linters_enabled
     end
 
     searchrange = [
@@ -208,18 +236,16 @@ function main()
         Method=:borg_moea,
         NumDimensions=length(searchrange),
         FitnessScheme=ParetoFitnessScheme{2}(is_minimizing=true, aggregator=weightedfitness),
-        MaxSteps=500,
+        MaxSteps=10000,
         ϵ=1.0)
 
     bs = best_candidate(res)
     bf = best_fitness(res)
     println("best candidate: ", bs, " with fitness: ", bf)
     println("best config: ", print_config(params_to_config(bs)))
-    @show pareto_frontier(res)
 
-    enable_all_param = [1 for i in 1:length(LINTERS)]
-    #x = run_datalinter(params_to_config(enable_all_param))
-    return pareto_frontier(res)
+
+    return res
 end
 #main()
 
