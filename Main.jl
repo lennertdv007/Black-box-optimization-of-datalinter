@@ -1,6 +1,6 @@
 using Pkg
-#using Plots
-using Gadfly
+using Plots
+#using Gadfly
 Pkg.activate("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter")
 Pkg.instantiate()
 
@@ -8,12 +8,14 @@ using DataLinter
 Pkg.add("BlackBoxOptim");
 using BlackBoxOptim
 
-FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/Grocery_Inventory.csv"
+FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/dataset_indie.csv"
 CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter/CONFIG/default.toml")
 
 
 LINTERS = CONFIG["linters"]
 PARAMETERS = CONFIG["parameters"]
+
+RESULT = []
 
 function print_config(config)
     for (linter, enabled) in config["linters"]
@@ -135,33 +137,52 @@ function params_to_config(params)
     return config
 end
 
-function plot_pareto(res)
-    pareto_curve_func(t, ::Type{Val{N}}) where {N} = (N * t[1]^2, N * (2 - t[1])^2)
-    pareto_curve = BlackBoxOptim.Hypersurface(pareto_curve_func,
-        RectSearchSpace(1, (0.0, 2.0)))
+function plot_pareto()
 
-    # generate the set of ϵ-indexed points on the exact Pareto frontier
-    pareto_pts = BlackBoxOptim.generate(pareto_curve,
-        fitness_scheme(res), Val{numdims(res)})
-    # calculate the distance between the solution and the exact frontier
-    BlackBoxOptim.IGD(pareto_curve, pareto_frontier(res), fitness_scheme(res), Val{numdims(res)})
+    #x = [time for (time, score, n_linters_enabled, params) in result]
+    #y = [score for (time, score, n_linters_enabled, params) in result]
 
-    # draw the results
-    Gadfly.plot(layer(x=[x.orig[1] for x in values(pareto_pts)],
-            y=[x.orig[2] for x in values(pareto_pts)],
-            Geom.line),
-        layer(x=[fitness(x)[1] for x in pareto_frontier(res)], # This gives only 1 point
-            y=[fitness(x)[2] for x in pareto_frontier(res)],
-            color=[index for (index, x) in enumerate(pareto_frontier(res))],
-            Geom.point))
+    filtered = [(time, score) for (time, score, n_linters_enabled, params) in RESULT if time < 0.005]
+    x = [t for (t, s) in filtered]
+    y = [s for (t, s) in filtered]
+
+    pl = plot(x, y, seriestype=:scatter)
+    xlabel!("Time")
+    ylabel!("score")
+    plot!(pl)
+    savefig(pl, "all_points.png")
+
+    pf = pareto_front(RESULT)
+    xp = [t for (t, s) in pf]
+    yp = [s for (t, s) in pf]
+    plp = plot(xp, yp, seriestype=:scatter)
+    xlabel!("Time")
+    ylabel!("score")
+    plot!(plp)
+    savefig(plp, "pareto_points.png")
+
+end
+
+function pareto_front(result)
+    pf = []
+    for p in result
+        dominated = false
+        for q in result
+            if (q[1] <= p[1]) && (q[2] >= p[2]) && ((q[1] < p[1]) || (q[2] > p[2]))
+                dominated = true
+                break
+            end
+        end
+        if !dominated
+            push!(pf, p)
+        end
+    end
+    return pf
 end
 
 
 function main()
 
-    min_time = time_datalinter(params_to_config([0 for _ in 1:27]))
-    max_time = time_datalinter(params_to_config(append!([1 for _ in 1:16], [0 for _ in 1:11])))
-    time_range = max_time - min_time
 
     function linter_objective(params, time_weight=0.5)
         #println("params: ", params)
@@ -180,10 +201,7 @@ function main()
         # 4) calculate the value of the fitness function (function that penalizes long timings and low errors)
         # bboptimize tries to minimize the fitness function
 
-        # normalize the time
-        normalized_time = (elapsed_time - min_time) / time_range # how to use this in fitness function?
-        #fitness::Float64 = (elapsed_time * time_weight) + 1 / score * (1 - time_weight)
-        # does the score need to be normalized?
+        # Q: Does the score need to be normalized? A: No
 
         # 5 return the value of the fitness function
         # look for bb fitness functions
@@ -191,7 +209,7 @@ function main()
         # calculate the numbers of linters enabled
         n_linters_enabled = sum([config["linters"][linter] == true for linter in keys(config["linters"])])
         #println("fitness: ", fitness, " elapsed_time: ", elapsed_time, " score: ", score, " n_linters_enabled: ", n_linters_enabled, "\n")
-        return normalized_time, 1 / score, n_linters_enabled
+        return elapsed_time, score, n_linters_enabled
     end
 
     searchrange = [
@@ -222,27 +240,36 @@ function main()
         (0, 1)] # match_perc (zipcodes_as_values)
 
 
-    result = []
+
+    # TODO align time and score
+    # TODO implement pareto_frontier self
     function bb_run(params; fitness_function=linter_objective) # function that runs objective and saves the results
         time, score, n_linters_enabled = fitness_function(params)
-        push!(result, (time, score, n_linters_enabled, params))
-        return (score, time)
+        push!(RESULT, (time, score, n_linters_enabled, params)) # TODO add config
+        #println("score : ", score, " time : ", time)
+        return (1 / time, Float64(score)) # 1/time because we want to minimize time
     end
 
     weightedfitness(f) = f[1] * 0.3 + f[2] * 0.7
 
+    # TODO experiment with the parameters
+    # TODO search for publications about metadata : 1 vector of values that describe the dataset
+    # TODO Try on different datasets
     res = bboptimize(bb_run;
         SearchRange=searchrange,
         Method=:borg_moea,
         NumDimensions=length(searchrange),
-        FitnessScheme=ParetoFitnessScheme{2}(is_minimizing=true, aggregator=weightedfitness),
-        MaxSteps=10000,
-        ϵ=1.0)
+        FitnessScheme=ParetoFitnessScheme{2}(is_minimizing=false),
+        MaxSteps=200000, # vary the steps
+        ϵ=0.1) # vary epsilon
 
     bs = best_candidate(res)
     bf = best_fitness(res)
     println("best candidate: ", bs, " with fitness: ", bf)
     println("best config: ", print_config(params_to_config(bs)))
+    println("pareto frontier points", pareto_frontier(res))
+
+    # TODO add labels
 
 
     return res
