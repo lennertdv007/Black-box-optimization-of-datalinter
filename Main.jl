@@ -15,8 +15,6 @@ CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub
 LINTERS = CONFIG["linters"]
 PARAMETERS = CONFIG["parameters"]
 
-RESULT = []
-
 function print_config(config)
     for (linter, enabled) in config["linters"]
         println("Linter: $linter")
@@ -137,37 +135,35 @@ function params_to_config(params)
     return config
 end
 
-function plot_pareto()
+function plot_pareto(result, index)
 
-    #x = [time for (time, score, n_linters_enabled, params) in result]
-    #y = [score for (time, score, n_linters_enabled, params) in result]
-
-    filtered = [(time, score) for (time, score, n_linters_enabled, params) in RESULT if time < 0.005]
-    x = [t for (t, s) in filtered]
-    y = [s for (t, s) in filtered]
+    x = [time for (time, score, n_linters_enabled, params) in result]
+    y = [score for (time, score, n_linters_enabled, params) in result]
 
     pl = plot(x, y, seriestype=:scatter)
     xlabel!("Time")
     ylabel!("score")
     plot!(pl)
-    savefig(pl, "all_points.png")
+    savefig(pl, "all_points_$index.png")
 
-    pf = pareto_front(RESULT)
-    xp = [t for (t, s) in pf]
-    yp = [s for (t, s) in pf]
+    pf = pareto_front(result)
+    xp = [t for (t, s, _, _) in pf]
+    yp = [s for (t, s, _, _) in pf]
     plp = plot(xp, yp, seriestype=:scatter)
     xlabel!("Time")
     ylabel!("score")
     plot!(plp)
-    savefig(plp, "pareto_points.png")
-
+    savefig(plp, "pareto_point_$index.png")
 end
 
+# TODO implement pareto_frontier self
 function pareto_front(result)
     pf = []
-    for p in result
+    for p in result # p = (time, score, n_linters_enabled, params)
         dominated = false
         for q in result
+            # highest score for each time is pareto point
+            # same score and higher time is filtered
             if (q[1] <= p[1]) && (q[2] >= p[2]) && ((q[1] < p[1]) || (q[2] > p[2]))
                 dominated = true
                 break
@@ -180,10 +176,9 @@ function pareto_front(result)
     return pf
 end
 
+function main(epsilon)
 
-function main()
-
-
+    result = []
     function linter_objective(params, time_weight=0.5)
         #println("params: ", params)
         # 1) construct a config for the datalinter which is a Dict
@@ -240,12 +235,10 @@ function main()
         (0, 1)] # match_perc (zipcodes_as_values)
 
 
-
     # TODO align time and score
-    # TODO implement pareto_frontier self
     function bb_run(params; fitness_function=linter_objective) # function that runs objective and saves the results
         time, score, n_linters_enabled = fitness_function(params)
-        push!(RESULT, (time, score, n_linters_enabled, params)) # TODO add config
+        push!(result, (time, score, n_linters_enabled, params)) # TODO add config
         #println("score : ", score, " time : ", time)
         return (1 / time, Float64(score)) # 1/time because we want to minimize time
     end
@@ -260,8 +253,8 @@ function main()
         Method=:borg_moea,
         NumDimensions=length(searchrange),
         FitnessScheme=ParetoFitnessScheme{2}(is_minimizing=false),
-        MaxSteps=200000, # vary the steps
-        ϵ=0.1) # vary epsilon
+        MaxSteps=10000, # vary the steps
+        ϵ=epsilon) # vary epsilon
 
     bs = best_candidate(res)
     bf = best_fitness(res)
@@ -269,10 +262,13 @@ function main()
     println("best config: ", print_config(params_to_config(bs)))
     println("pareto frontier points", pareto_frontier(res))
 
-    # TODO add labels
-
-
-    return res
+    return res, result
 end
-#main()
 
+function epsilon_loop()
+    eps = collect(0.1:0.1:0.9)
+    for (index, e) in enumerate(eps)
+        res, result = main(e)
+        plot_pareto(result, index)
+    end
+end
