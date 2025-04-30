@@ -8,7 +8,7 @@ using DataLinter
 Pkg.add("BlackBoxOptim");
 using BlackBoxOptim
 
-FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/dataset_indie.csv"
+FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/freMTPL2freq.csv"
 CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter/CONFIG/default.toml")
 
 
@@ -135,27 +135,6 @@ function params_to_config(params)
     return config
 end
 
-function plot_pareto(result, index)
-
-    x = [time for (time, score, n_linters_enabled, params) in result]
-    y = [score for (time, score, n_linters_enabled, params) in result]
-
-    pl = plot(x, y, seriestype=:scatter)
-    xlabel!("Time")
-    ylabel!("score")
-    plot!(pl)
-    savefig(pl, "all_points_$index.png")
-
-    pf = pareto_front(result)
-    xp = [t for (t, s, _, _) in pf]
-    yp = [s for (t, s, _, _) in pf]
-    plp = plot(xp, yp, seriestype=:scatter)
-    xlabel!("Time")
-    ylabel!("score")
-    plot!(plp)
-    savefig(plp, "pareto_point_$index.png")
-end
-
 # TODO implement pareto_frontier self
 function pareto_front(result)
     pf = []
@@ -176,7 +155,26 @@ function pareto_front(result)
     return pf
 end
 
-function main(epsilon)
+function plot_pareto(result, index)
+
+    x = [time for (time, _, _, _) in result]
+    y = [score for (_, score, _, _) in result]
+
+    pf = pareto_front(result)
+    xp = [t for (t, _, _, _) in pf]
+    yp = [s for (_, s, _, _) in pf]
+
+    pl = plot(x, y, seriestype=:scatter, label="All Points", color=:blue)
+    plot!(pl, xp, yp, seriestype=:scatter, label="Pareto Front", color=:red)
+
+    xlabel!("Time")
+    ylabel!("Score")
+    savefig(pl, "combined_plot_eps_$index.png")
+end
+
+
+
+function bb_optimization(epsilon)
 
     result = []
     function linter_objective(params, time_weight=0.5)
@@ -184,8 +182,8 @@ function main(epsilon)
         # 1) construct a config for the datalinter which is a Dict
         config = params_to_config(params)
         # 2) run the linter with the config
-        kb = DataLinter.kb_load("")
-        ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
+        kb = DataLinter.kb_load("") # put this outside this scope?
+        ctx = DataLinter.DataInterface.build_data_context(FILEPATH) # put this outside this scope?
         start_time = time()
         out = lint(ctx, kb; config=config, progress=false)
         # 3) calculate the data error indicator and the timing
@@ -194,16 +192,10 @@ function main(epsilon)
         # score for linters that found nothing = 0, so this has no influence on the fitness function
         # maybe we should add a penalty for linters that found nothing? (score -= 1)?
         # 4) calculate the value of the fitness function (function that penalizes long timings and low errors)
-        # bboptimize tries to minimize the fitness function
-
         # Q: Does the score need to be normalized? A: No
-
-        # 5 return the value of the fitness function
-        # look for bb fitness functions
         # save for each run time, score, n_linters_enabled and config
-        # calculate the numbers of linters enabled
         n_linters_enabled = sum([config["linters"][linter] == true for linter in keys(config["linters"])])
-        #println("fitness: ", fitness, " elapsed_time: ", elapsed_time, " score: ", score, " n_linters_enabled: ", n_linters_enabled, "\n")
+        # 5 return the value of the fitness function
         return elapsed_time, score, n_linters_enabled
     end
 
@@ -256,19 +248,13 @@ function main(epsilon)
         MaxSteps=10000, # vary the steps
         ϵ=epsilon) # vary epsilon
 
-    bs = best_candidate(res)
-    bf = best_fitness(res)
-    println("best candidate: ", bs, " with fitness: ", bf)
-    println("best config: ", print_config(params_to_config(bs)))
-    println("pareto frontier points", pareto_frontier(res))
-
     return res, result
 end
 
 function epsilon_loop()
-    eps = collect(0.1:0.1:0.9)
-    for (index, e) in enumerate(eps)
-        res, result = main(e)
-        plot_pareto(result, index)
+    eps = collect(0.01:0.05:0.5)
+    for e in eps
+        res, result = bb_optimization(e)
+        plot_pareto(result, e)
     end
 end
