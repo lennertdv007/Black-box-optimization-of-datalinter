@@ -170,6 +170,7 @@ function plot_pareto(result, index)
     xlabel!("Time")
     ylabel!("Score")
     savefig(pl, "combined_plot_eps_$index.png")
+    # TODO add log scale for time
 end
 
 
@@ -237,9 +238,24 @@ function bb_optimization(epsilon)
 
     weightedfitness(f) = f[1] * 0.3 + f[2] * 0.7
 
-    # TODO experiment with the parameters
     # TODO search for publications about metadata : 1 vector of values that describe the dataset
-    # TODO Try on different datasets
+    # TODO Try on different datasets!!
+    # TODO choose 1 epsilon and MaxSteps
+    # questions:
+    # is this the right way to do it?
+    # use this function to train on different datatsets?
+    # train a function that predicts the behavior of the pareto frontier based on the metadata?
+    # or train a function that predicts the best configuration for a dataset?
+    # dataset + behavior of the linter => metadata => config
+    # use machine learning package to train next function (MLJ : https://github.com/JuliaAI/MLJ.jl)
+    # think about motivations about implementations and problems
+    # make comparison between optimizer and project
+    # gather references for algorithms and methods and for metalearning used for rapport (talk about borg_moea)
+    # make an argument for metalearning in autoML
+    # talk about next steps in research
+    # talk about things that didnt work
+
+
     res = bboptimize(bb_run;
         SearchRange=searchrange,
         Method=:borg_moea,
