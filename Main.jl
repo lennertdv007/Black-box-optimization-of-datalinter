@@ -1,16 +1,13 @@
 using Pkg
 using Plots
-#using Gadfly
 Pkg.activate("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter")
-Pkg.instantiate()
+#Pkg.instantiate()
 
 using DataLinter
-Pkg.add("BlackBoxOptim");
 using BlackBoxOptim
 
 FILEPATH = "/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/freMTPL2freq.csv"
 CONFIG = DataLinter.Configuration.load_config("/Users/lennertdeville/Desktop/vub/3e_bach/bachelorproef/DataLinter/CONFIG/default.toml")
-
 
 LINTERS = CONFIG["linters"]
 PARAMETERS = CONFIG["parameters"]
@@ -22,12 +19,6 @@ function print_config(config)
         p = config["parameters"]
         linter_params = haskey(p, linter) ? p[linter] : Dict{String,Any}()
         println("  Parameters: $linter_params")
-    end
-end
-
-function disable_all_linters(config)
-    for (value, key) in config["linters"]
-        config["linters"][value] = false
     end
 end
 
@@ -70,7 +61,7 @@ function score_lint_error(lint_out)
     return score
 end
 
-function run_datalinter(conf, verbose=false)
+function run_datalinter(conf, verbose=false, file=FILEPATH)
     if verbose
         print("\n")
         println("Running datalinter on configuration : ")
@@ -78,7 +69,7 @@ function run_datalinter(conf, verbose=false)
         println("\n")
     end
     kb = DataLinter.kb_load("")
-    ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
+    ctx = DataLinter.DataInterface.build_data_context(file)
     start_time = time()
     out = lint(ctx, kb; config=conf, progress=false)
     elapsed_time = time() - start_time
@@ -98,18 +89,8 @@ function run_datalinter(conf, verbose=false)
     return s
 end
 
-function time_datalinter(conf)
-    kb = DataLinter.kb_load("")
-    ctx = DataLinter.DataInterface.build_data_context(FILEPATH)
-    start_time = time()
-    out = lint(ctx, kb; config=conf, progress=false)
-    elapsed_time = time() - start_time
-    return elapsed_time
-end
-
 """
-function that maps the paramaters to a config for bboptimize
-    current version has only parameters to enable or disable linters
+function that maps the paramaters to a config(Dict) for bb_optimize
 """
 function params_to_config(params)
     config = Dict{String,Any}( # Initialize config 
@@ -117,7 +98,7 @@ function params_to_config(params)
         "linters" => Dict{String,Any}()
     )
     for (index, (key, value)) in enumerate(LINTERS)
-        config["linters"][key] = Bool(params[index] > 0.5)
+        config["linters"][key] = Bool(params[index] > 0.5) # Float64 to Bool
     end
     index = 16
     for (key, value) in PARAMETERS
@@ -135,7 +116,11 @@ function params_to_config(params)
     return config
 end
 
-# TODO implement pareto_frontier self
+"""
+function that calculates the pareto front points from list of points
+    result = [(time, score, n_linters_enabled, params)]
+    returns a list of pareto points
+"""
 function pareto_front(result)
     pf = []
     for p in result # p = (time, score, n_linters_enabled, params)
@@ -148,13 +133,19 @@ function pareto_front(result)
                 break
             end
         end
-        if !dominated
+        if !dominated # if not dominated, means that not found a point that is better => pareto point
             push!(pf, p)
         end
     end
     return pf
 end
 
+"""
+function to plot the result and the pareto front
+    result = [(time, score, n_linters_enabled, params)]
+    index = for the filename
+    plot the pareto front of the result
+"""
 function plot_pareto(result, index)
 
     x = [time for (time, _, _, _) in result]
@@ -164,22 +155,22 @@ function plot_pareto(result, index)
     xp = [t for (t, _, _, _) in pf]
     yp = [s for (_, s, _, _) in pf]
 
-    pl = plot(x, y, seriestype=:scatter, label="All Points", color=:blue)
+    pl = plot(x, y, seriestype=:scatter, label="All Points", color=:blue, xscale=:log10)
     plot!(pl, xp, yp, seriestype=:scatter, label="Pareto Front", color=:red)
 
-    xlabel!("Time")
+    xlabel!("Time (log scale)")
     ylabel!("Score")
-    savefig(pl, "combined_plot_eps_$index.png")
-    # TODO add log scale for time
+    savefig(pl, "plots/combined_plot_$index.png")
+
 end
 
-
-
-function bb_optimization(epsilon)
+function bb_optimization()
 
     result = []
+    """
+    function that runs the linter and returns the time, score and n_linters_enabled
+    """
     function linter_objective(params, time_weight=0.5)
-        #println("params: ", params)
         # 1) construct a config for the datalinter which is a Dict
         config = params_to_config(params)
         # 2) run the linter with the config
@@ -197,7 +188,7 @@ function bb_optimization(epsilon)
         # save for each run time, score, n_linters_enabled and config
         n_linters_enabled = sum([config["linters"][linter] == true for linter in keys(config["linters"])])
         # 5 return the value of the fitness function
-        return elapsed_time, score, n_linters_enabled
+        return elapsed_time, score, n_linters_enabled, config
     end
 
     searchrange = [
@@ -227,27 +218,22 @@ function bb_optimization(epsilon)
         (0, 100), # tukey_fences_k (large_outliers)
         (0, 1)] # match_perc (zipcodes_as_values)
 
-
-    # TODO align time and score
-    function bb_run(params; fitness_function=linter_objective) # function that runs objective and saves the results
-        time, score, n_linters_enabled = fitness_function(params)
-        push!(result, (time, score, n_linters_enabled, params)) # TODO add config
-        #println("score : ", score, " time : ", time)
+    """
+    function that runs objective and saves the results (wrapper function for bb_run)
+    """
+    function bb_run(params; fitness_function=linter_objective)
+        time, score, n_linters_enabled, config = fitness_function(params)
+        push!(result, (time, score, n_linters_enabled, config))
         return (1 / time, Float64(score)) # 1/time because we want to minimize time
     end
 
-    weightedfitness(f) = f[1] * 0.3 + f[2] * 0.7
-
-    # TODO search for publications about metadata : 1 vector of values that describe the dataset
-    # TODO Try on different datasets!!
-    # TODO choose 1 epsilon and MaxSteps
-    # questions:
-    # is this the right way to do it?
-    # use this function to train on different datatsets?
-    # train a function that predicts the behavior of the pareto frontier based on the metadata?
-    # or train a function that predicts the best configuration for a dataset?
+    # TODO: for code
+    # Try on different datasets!!
+    # train a function that predicts the best configuration for a dataset given a behavior and metadata
     # dataset + behavior of the linter => metadata => config
     # use machine learning package to train next function (MLJ : https://github.com/JuliaAI/MLJ.jl)
+
+    # TODO: for report
     # think about motivations about implementations and problems
     # make comparison between optimizer and project
     # gather references for algorithms and methods and for metalearning used for rapport (talk about borg_moea)
@@ -255,15 +241,13 @@ function bb_optimization(epsilon)
     # talk about next steps in research
     # talk about things that didnt work
 
-
     res = bboptimize(bb_run;
         SearchRange=searchrange,
         Method=:borg_moea,
         NumDimensions=length(searchrange),
         FitnessScheme=ParetoFitnessScheme{2}(is_minimizing=false),
-        MaxSteps=10000, # vary the steps
-        ϵ=epsilon) # vary epsilon
-
+        MaxSteps=1000,
+        ϵ=[2.0, 0.005])
     return res, result
 end
 
