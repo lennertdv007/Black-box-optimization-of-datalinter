@@ -1,3 +1,6 @@
+module data_descriptors
+export extract_metadata
+
 using CSV, DataFrames, Statistics
 
 """
@@ -42,4 +45,5 @@ function extract_metadata(file_path::String)
 
     return metadata
 end
+end # module
 
