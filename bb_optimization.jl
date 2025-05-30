@@ -1,5 +1,5 @@
 module BB_Optimization
-export bb_optimization_best_pareto, bb_optimization, run_linter_on_1_lint
+export bb_optimization_best_pareto, bb_optimization, run_linter_on_1_lint, plot_only_results
 
 using Pkg
 using Plots
@@ -24,24 +24,6 @@ function print_config(config)
         linter_params = haskey(p, linter) ? p[linter] : Dict{String,Any}()
         println("  Parameters: $linter_params")
     end
-end
-
-"""
-Returns a dictionary with for each Linter a dictionary with for each error type the amount of errors found
-"""
-function count_lint_error(output)
-    result_dict = Dict{String,Dict{String,Int}}()
-    for ((linter, _), result) in output
-        lname = String(linter.name)
-        if !haskey(result_dict, lname)
-            result_dict[lname] = Dict("info" => 0, "warning" => 0, "important" => 0, "experimental" => 0) # Initialize dict key with all 0 values
-        end
-        if isnothing(result)
-        elseif result
-            result_dict[lname][linter.warn_level] += 1
-        end
-    end
-    return result_dict
 end
 
 """
@@ -83,10 +65,8 @@ function run_datalinter(conf, verbose=false, file=FILEPATH)
         println("In that time, ", length(out), " problems were found.")
         print("\n\n\n\n")
     end
-    lint_error = count_lint_error(out)
     s = score_lint_error(out)
     if verbose
-        println("lint_error", lint_error)
         println("Score: ", s)
         print("\n\n\n\n")
     end
@@ -161,6 +141,19 @@ function extract_best_pareto(pareto_points)
     return best
 end
 
+function plot_results(result, index)
+
+    x = [time for (time, _, _, _) in result]
+    y = [score for (_, score, _, _) in result]
+
+    pl = plot(x, y, seriestype=:scatter, label="results", color=:blue, xscale=:log10)
+
+    xlabel!("Time (log scale)")
+    ylabel!("Score")
+    savefig(pl, "plots/plot_$index.png")
+
+end
+
 """
 function to plot the result and the pareto front
     result = [(time, score, n_linters_enabled, params)]
@@ -181,7 +174,7 @@ function plot_pareto(result, index)
 
     xlabel!("Time (log scale)")
     ylabel!("Score")
-    savefig(pl, "plots/combined_plot_$index.png")
+    savefig(pl, "plots/pareto_plot_$index.png")
 
 end
 
@@ -202,11 +195,6 @@ function bb_optimization(file=FILEPATH)
         # 3) calculate the data error indicator and the timing
         elapsed_time = time() - start_time
         score = score_lint_error(out)
-        # score for linters that found nothing = 0, so this has no influence on the fitness function
-        # maybe we should add a penalty for linters that found nothing? (score -= 1)?
-        # 4) calculate the value of the fitness function (function that penalizes long timings and low errors)
-        # Q: Does the score need to be normalized? A: No
-        # save for each run time, score, n_linters_enabled and config
         n_linters_enabled = sum([config["linters"][linter] == true for linter in keys(config["linters"])])
         # 5 return the value of the fitness function
         return elapsed_time, score, n_linters_enabled
@@ -248,27 +236,13 @@ function bb_optimization(file=FILEPATH)
         return (1 / time, Float64(score)) # 1/time because we want to minimize time
     end
 
-    # TODO: for code
-    # Try on different datasets!!
-    # train a function that predicts the best configuration for a dataset given a behavior and metadata
-    # dataset + behavior of the linter => metadata => config
-    # use machine learning package to train next function (MLJ : https://github.com/JuliaAI/MLJ.jl)
-
-    # TODO: for report
-    # think about motivations about implementations and problems
-    # make comparison between optimizer and project
-    # gather references for algorithms and methods and for metalearning used for rapport (talk about borg_moea)
-    # make an argument for metalearning in autoML
-    # talk about next steps in research
-    # talk about things that didnt work
-
     res = bboptimize(bb_run;
         SearchRange=searchrange,
         Method=:borg_moea,
         NumDimensions=length(searchrange),
         FitnessScheme=ParetoFitnessScheme{2}(is_minimizing=false),
-        MaxSteps=5000,
-        ϵ=[2.0, 0.005])
+        MaxSteps=1000,
+        ϵ=[0.01, 10])
     return result
 end
 
@@ -291,6 +265,12 @@ function disable_all_linters(config)
     end
 end
 
+function enable_all_linters(config)
+    for (value, key) in config["linters"]
+        config["linters"][value] = true
+    end
+end
+
 function plot_lints(result, index)
 
     y = [score for (score, _) in result]
@@ -309,7 +289,7 @@ function plot_lints(result, index)
     end
     #"""
 
-    savefig(pl, "plots/plot_example_$index.png")
+    savefig(pl, "plots/plot_1_lint_example_$index.png")
 end
 
 function run_linter_on_1_lint()
@@ -320,8 +300,8 @@ function run_linter_on_1_lint()
                 continue  # skip hidden files like .DS_Store, .gitignore, etc.
             else
                 lint_result = []
-                disable_all_linters(CONFIG)
                 for (value, key) in LINTERS #loop to enable each linter sequentially
+                    disable_all_linters(CONFIG)
                     LINTERS[value] = true
                     s, t = run_datalinter(CONFIG, false, joinpath(root, file))
                     push!(lint_result, (s, t))
@@ -333,5 +313,20 @@ function run_linter_on_1_lint()
     end
 end
 
+function plot_only_results()
+    index = 1
+    for (root, dirs, files) in walkdir("datasets/")
+        for file in files
+            if startswith(file, ".")
+                continue  # skip hidden files like .DS_Store, .gitignore, etc.
+            else
+                result = bb_optimization(joinpath(root, file))
+                # extract the best pareto point
+                plot_pareto(result, index)
+                index += 1
+            end
+        end
+    end
+end
 
 end # module bb_Optimization
